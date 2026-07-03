@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ぺたコラ｜スパチャのスクショをかわいく1枚に</title>
+<meta name="description" content="初スパチャ記念のスクショを、ブラウザだけでかわいくコラージュ。無料・登録不要。写真は端末の中だけで処理されます。">
+<meta property="og:title" content="ぺたコラ">
+<meta property="og:description" content="スパチャのスクショを、かわいく1まいに。無料・登録不要のコラージュメーカー🎀">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#FF6FA5">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎀</text></svg>">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body style="margin:0;background:#FFF4F8">
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useRef, useState, useEffect, useReducer, useCallback } = React;
+
+/* ==========================================================
+   ★ フィードバックフォームの設定 ★
+   GoogleフォームやマシュマロのURLを、下の "" の間に貼ってね。
+   例) const FEEDBACK_URL = "https://forms.gle/xxxxxxx";
+   空のままだとボタンは表示されません。
+   ========================================================== */
+const FEEDBACK_URL = "";
+
+
+/* ================= utils ================= */
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function rr(ctx, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function coverDraw(ctx, img, x, y, w, h) {
+  const ia = img.width / img.height;
+  const ra = w / h;
+  let sx, sy, sw, sh;
+  if (ia > ra) { sh = img.height; sw = sh * ra; sx = (img.width - sw) / 2; sy = 0; }
+  else { sw = img.width; sh = sw / ia; sx = 0; sy = (img.height - sh) / 2; }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+}
+
+const MARU = `"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic","M PLUS Rounded 1c",sans-serif`;
+const EMOJI_FONT = `"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+
+/* ================= canvas sizes ================= */
+const ASPECTS = {
+  square: { w: 1080, h: 1080, label: "せいほうけい", sub: "1:1" },
+  wide:   { w: 1600, h: 900,  label: "よこなが",     sub: "16:9" },
+  tall:   { w: 1080, h: 1350, label: "たてなが",     sub: "4:5" },
+};
+
+/* ================= backgrounds ================= */
+const BGS = [
+  {
+    id: "ichigo", label: "いちごみるく",
+    css: "linear-gradient(180deg,#FFE3EE,#FFF8FB)",
+    draw(ctx, W, H) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#FFE3EE"); g.addColorStop(1, "#FFF8FB");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      const step = 96;
+      for (let y = step / 2, row = 0; y < H + step; y += step, row++) {
+        for (let x = row % 2 ? step / 2 : 0; x < W + step; x += step) {
+          ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    },
+  },
+  {
+    id: "yume", label: "ゆめかわ",
+    css: "linear-gradient(135deg,#E9DFFC,#FFE7F3)",
+    draw(ctx, W, H) {
+      const g = ctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, "#E9DFFC"); g.addColorStop(1, "#FFE7F3");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const rnd = mulberry32(12);
+      const cols = ["#FFFFFF", "#D9C6FF", "#FFC9E2"];
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (let i = 0; i < 42; i++) {
+        const s = 16 + rnd() * 30;
+        ctx.font = `${s}px ${MARU}`;
+        ctx.fillStyle = cols[Math.floor(rnd() * cols.length)];
+        ctx.globalAlpha = 0.55 + rnd() * 0.45;
+        ctx.fillText("✦", rnd() * W, rnd() * H);
+      }
+      ctx.globalAlpha = 1;
+    },
+  },
+  {
+    id: "mint", label: "ミントソーダ",
+    css: "linear-gradient(180deg,#DFF6EE,#F2FFFB)",
+    draw(ctx, W, H) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#DFF6EE"); g.addColorStop(1, "#F2FFFB");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const rnd = mulberry32(33);
+      for (let i = 0; i < 26; i++) {
+        const r = 10 + rnd() * 40;
+        const x = rnd() * W, y = rnd() * H;
+        if (i % 3 === 0) {
+          ctx.fillStyle = "rgba(255,255,255,0.28)";
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    },
+  },
+  {
+    id: "heart", label: "ハートいっぱい",
+    css: "#FFF6FA",
+    draw(ctx, W, H) {
+      ctx.fillStyle = "#FFF6FA"; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#FFD1E3";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `36px ${MARU}`;
+      const step = 116;
+      let k = 0;
+      for (let y = step / 2; y < H + step; y += step) {
+        for (let x = (k % 2 ? step / 2 : 0); x < W + step; x += step) {
+          ctx.save(); ctx.translate(x, y); ctx.rotate(k % 2 ? 0.22 : -0.22);
+          ctx.fillText("♥", 0, 0); ctx.restore();
+        }
+        k++;
+      }
+    },
+  },
+  {
+    id: "gingham", label: "ギンガム",
+    css: "repeating-linear-gradient(0deg,#FFD5E6 0 10px,#fff 10px 20px)",
+    draw(ctx, W, H) {
+      ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(255,168,204,0.38)";
+      const bw = 46, gap = 92;
+      for (let x = 0; x < W + gap; x += gap) ctx.fillRect(x, 0, bw, H);
+      for (let y = 0; y < H + gap; y += gap) ctx.fillRect(0, y, W, bw);
+    },
+  },
+  {
+    id: "stripe", label: "しましま",
+    css: "repeating-linear-gradient(-18deg,#FFDCEA 0 12px,#FFF6FA 12px 24px)",
+    draw(ctx, W, H) {
+      ctx.fillStyle = "#FFF6FA"; ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(W / 2, H / 2); ctx.rotate(-Math.PI / 10);
+      const D = Math.hypot(W, H);
+      ctx.fillStyle = "#FFDCEA";
+      for (let x = -D; x < D; x += 96) ctx.fillRect(x, -D, 48, D * 2);
+      ctx.restore();
+    },
+  },
+  {
+    id: "party", label: "おいわい",
+    css: "linear-gradient(180deg,#FFF9EF,#FFF3F7)",
+    draw(ctx, W, H) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#FFF9EF"); g.addColorStop(1, "#FFF3F7");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const rnd = mulberry32(77);
+      const cols = ["#FF9EC4", "#A88BE8", "#7EDCC4", "#FFD37E", "#8FC7FF"];
+      for (let i = 0; i < 72; i++) {
+        ctx.save();
+        ctx.translate(rnd() * W, rnd() * H);
+        ctx.rotate(rnd() * Math.PI * 2);
+        ctx.fillStyle = cols[Math.floor(rnd() * cols.length)];
+        ctx.globalAlpha = 0.9;
+        if (i % 3 === 0) { ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); }
+        else ctx.fillRect(-8, -4.5, 16, 9);
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    },
+  },
+  {
+    id: "white", label: "ましろ",
+    css: "#FFFFFF",
+    draw(ctx, W, H) { ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H); },
+  },
+];
+
+/* ================= templates ================= */
+function gridCells(n, W, H) {
+  const pad = Math.min(W, H) * 0.06;
+  const aw = W - pad * 2, ah = H - pad * 2;
+  let cols = Math.ceil(Math.sqrt(n));
+  let rows = Math.ceil(n / cols);
+  if (W > H && rows > cols) { const t = cols; cols = rows; rows = t; }
+  const cw = aw / cols, ch = ah / rows;
+  const cells = [];
+  for (let i = 0; i < n; i++) {
+    const r = Math.floor(i / cols);
+    const inRow = r === rows - 1 ? n - r * cols : cols;
+    const c = i % cols;
+    const offX = (cols - inRow) * cw / 2;
+    cells.push({
+      x: pad + offX + c * cw + cw / 2,
+      y: pad + r * ch + ch / 2,
+      cw, ch,
+    });
+  }
+  return cells;
+}
+
+const TEMPLATES = [
+  {
+    id: "polaroid", label: "ぽらろいど", icon: "🖼️", frame: "polaroid",
+    place(n, W, H) {
+      return gridCells(n, W, H).map((c) => ({
+        x: c.x + (Math.random() - 0.5) * c.cw * 0.1,
+        y: c.y + (Math.random() - 0.5) * c.ch * 0.08,
+        cw: c.cw * (n === 1 ? 0.86 : 1.04),
+        ch: c.ch * (n === 1 ? 0.86 : 1.04),
+        rot: (Math.random() - 0.5) * 14,
+      }));
+    },
+  },
+  {
+    id: "grid", label: "きっちり", icon: "🔲", frame: "white",
+    place(n, W, H) {
+      return gridCells(n, W, H).map((c) => ({
+        x: c.x, y: c.y, cw: c.cw * 0.94, ch: c.ch * 0.94, rot: 0,
+      }));
+    },
+  },
+  {
+    id: "naname", label: "ななめ", icon: "🎢", frame: "tape",
+    place(n, W, H) {
+      const out = [];
+      const size = Math.min(W, H) * (n <= 2 ? 0.52 : n <= 4 ? 0.46 : 0.4);
+      for (let i = 0; i < n; i++) {
+        const t = n === 1 ? 0.5 : i / (n - 1);
+        out.push({
+          x: (0.26 + t * 0.48) * W,
+          y: (0.26 + t * 0.48) * H,
+          cw: size, ch: size,
+          rot: i % 2 ? 6 : -6,
+        });
+      }
+      return out;
+    },
+  },
+];
+
+/* ================= stickers / text presets ================= */
+const STICKERS = ["💖","💝","✨","🎀","⭐","🌸","🍓","👑","🎉","🥳","💐","💌","😭","🫶","🍰","🐰","🌙","🫧","💫","🎂"];
+const SPRINKLE = ["✨","💖","⭐","🫧","💫"];
+const TEXT_PRESETS = ["初スパチャ記念🎉","ありがとう💖","うれしすぎる😭","たいせつな思い出🌸"];
+const TEXT_COLORS = ["#FF6FA5","#A78BE0","#4FBFA0","#FFA02E","#5AA9E6","#FFFFFF","#6B4A5B"];
+const FRAMES = [
+  { id: "polaroid", label: "ポラロイド" },
+  { id: "white",    label: "しろふち" },
+  { id: "tape",     label: "テープ" },
+  { id: "round",    label: "まるく" },
+  { id: "none",     label: "なし" },
+];
+
+/* ================= item drawing ================= */
+function getBounds(it) {
+  if (it.type === "photo") {
+    const w = it.bw * it.scale, h = it.bh * it.scale, m = Math.min(w, h);
+    const f = it.data.frame;
+    if (f === "white") { const s = m * 0.05; return { w: w + s * 2, h: h + s * 2, oy: 0 }; }
+    if (f === "polaroid") {
+      const s = m * 0.055, bot = m * 0.2;
+      return { w: w + s * 2, h: h + s + bot, oy: (bot - s) / 2 };
+    }
+    return { w, h, oy: 0 };
+  }
+  if (it.type === "sticker") {
+    const s = it.bh * it.scale;
+    return { w: s * 1.08, h: s * 1.08, oy: 0 };
+  }
+  const fs = it.data.fs * it.scale;
+  const w = (it._mw || it.data.text.length * fs * 0.95) + fs * 0.35;
+  return { w, h: fs * 1.4, oy: 0 };
+}
+
+function drawItem(ctx, it) {
+  ctx.save();
+  ctx.translate(it.x, it.y);
+  ctx.rotate((it.rot * Math.PI) / 180);
+
+  if (it.type === "photo") {
+    const w = it.bw * it.scale, h = it.bh * it.scale, m = Math.min(w, h);
+    const f = it.data.frame;
+    if (f === "white" || f === "polaroid") {
+      const s = f === "polaroid" ? m * 0.055 : m * 0.05;
+      const bot = f === "polaroid" ? m * 0.2 : s;
+      ctx.save();
+      ctx.shadowColor = "rgba(190,110,150,0.35)";
+      ctx.shadowBlur = m * 0.09; ctx.shadowOffsetY = m * 0.035;
+      ctx.fillStyle = "#fff";
+      rr(ctx, -w / 2 - s, -h / 2 - s, w + s * 2, h + s + bot, f === "polaroid" ? m * 0.015 : m * 0.05);
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      rr(ctx, -w / 2, -h / 2, w, h, f === "polaroid" ? 2 : m * 0.03);
+      ctx.clip();
+      coverDraw(ctx, it.data.img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    } else {
+      const rad = f === "round" ? m * 0.16 : m * 0.035;
+      ctx.save();
+      ctx.shadowColor = "rgba(190,110,150,0.32)";
+      ctx.shadowBlur = m * 0.08; ctx.shadowOffsetY = m * 0.03;
+      ctx.fillStyle = "#fff";
+      rr(ctx, -w / 2, -h / 2, w, h, rad); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      rr(ctx, -w / 2, -h / 2, w, h, rad); ctx.clip();
+      coverDraw(ctx, it.data.img, -w / 2, -h / 2, w, h);
+      ctx.restore();
+      if (f === "tape") {
+        const tw = m * 0.36, th = m * 0.1;
+        ctx.save(); ctx.translate(-w / 2, -h / 2); ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = "rgba(255,158,196,0.72)";
+        ctx.fillRect(-tw / 2, -th / 2, tw, th); ctx.restore();
+        ctx.save(); ctx.translate(w / 2, -h / 2); ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = "rgba(178,150,235,0.68)";
+        ctx.fillRect(-tw / 2, -th / 2, tw, th); ctx.restore();
+      }
+    }
+  } else if (it.type === "sticker") {
+    const s = it.bh * it.scale;
+    ctx.font = `${s}px ${EMOJI_FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(it.data.emoji, 0, s * 0.06);
+  } else if (it.type === "text") {
+    const fs = it.data.fs * it.scale;
+    ctx.font = `900 ${fs}px ${MARU}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    const outline = it.data.color === "#FFFFFF" ? "#FF8FBB" : "#FFFFFF";
+    ctx.lineWidth = fs * 0.22;
+    ctx.strokeStyle = outline;
+    ctx.strokeText(it.data.text, 0, 0);
+    ctx.fillStyle = it.data.color;
+    ctx.fillText(it.data.text, 0, 0);
+    it._mw = ctx.measureText(it.data.text).width;
+  }
+  ctx.restore();
+}
+
+function renderScene(ctx, W, H, items, bgId, selId, clean) {
+  ctx.clearRect(0, 0, W, H);
+  const bg = BGS.find((b) => b.id === bgId) || BGS[0];
+  bg.draw(ctx, W, H);
+  items.forEach((it) => drawItem(ctx, it));
+
+  if (clean) return;
+
+  if (!items.some((i) => i.type === "photo")) {
+    const bw = W * 0.76, bh = H * 0.44;
+    ctx.save();
+    ctx.setLineDash([16, 13]);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(255,111,165,0.5)";
+    rr(ctx, (W - bw) / 2, (H - bh) / 2, bw, bh, 36);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#C05A8A";
+    ctx.font = `700 ${W * 0.044}px ${MARU}`;
+    ctx.fillText("したの「しゃしん」タブから", W / 2, H / 2 - W * 0.05);
+    ctx.fillText("スクショをえらんでね 📷", W / 2, H / 2 + W * 0.012);
+    ctx.font = `500 ${W * 0.029}px ${MARU}`;
+    ctx.fillStyle = "#CE8FAF";
+    ctx.fillText("① えらぶ → ② かざる → ③ ほぞん", W / 2, H / 2 + W * 0.095);
+    ctx.restore();
+  }
+
+  const sel = selId && items.find((i) => i.id === selId);
+  if (sel) {
+    const b = getBounds(sel);
+    ctx.save();
+    ctx.translate(sel.x, sel.y);
+    ctx.rotate((sel.rot * Math.PI) / 180);
+    ctx.setLineDash([12, 9]);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#FF6FA5";
+    rr(ctx, -b.w / 2 - 8, -b.h / 2 + b.oy - 8, b.w + 16, b.h + 16, 14);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const cs = [
+      [-b.w / 2 - 8, -b.h / 2 + b.oy - 8], [b.w / 2 + 8, -b.h / 2 + b.oy - 8],
+      [-b.w / 2 - 8, b.h / 2 + b.oy + 8], [b.w / 2 + 8, b.h / 2 + b.oy + 8],
+    ];
+    cs.forEach(([cx, cy]) => {
+      ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.lineWidth = 4; ctx.strokeStyle = "#FF6FA5"; ctx.stroke();
+    });
+    ctx.restore();
+  }
+}
+
+/* ================= component ================= */
+function PetaKora() {
+  const canvasRef = useRef(null);
+  const fileRef = useRef(null);
+  const itemsRef = useRef([]);
+  const selRef = useRef(null);
+  const dragRef = useRef(null);
+
+  const [tick, force] = useReducer((x) => x + 1, 0);
+  const [selId, setSelId] = useState(null);
+  const [tab, setTab] = useState("photo");
+  const [aspect, setAspect] = useState("square");
+  const [bg, setBg] = useState("ichigo");
+  const [tpl, setTpl] = useState("polaroid");
+  const [textInput, setTextInput] = useState("");
+  const [textColor, setTextColor] = useState("#FF6FA5");
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const { w: W, h: H } = ASPECTS[aspect];
+  const canShare = typeof navigator !== "undefined" && !!navigator.share;
+
+  const select = useCallback((id) => { selRef.current = id; setSelId(id); }, []);
+
+  const redraw = useCallback(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    renderScene(cv.getContext("2d"), W, H, itemsRef.current, bg, selRef.current, false);
+  }, [W, H, bg]);
+
+  /* canvas size + repaint */
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    cv.width = W; cv.height = H;
+    redraw();
+  }, [W, H, redraw]);
+
+  useEffect(() => { redraw(); }, [tick, selId, redraw]);
+
+  /* repaint once webfont is ready */
+  useEffect(() => {
+    let alive = true;
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => { if (alive) force(); });
+    }
+    const t = setTimeout(() => { if (alive) force(); }, 1500);
+    return () => { alive = false; clearTimeout(t); };
+  }, []);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2600);
+  };
+
+  /* ---------- layout / template ---------- */
+  const applyTemplate = useCallback((tid, width = W, height = H) => {
+    const t = TEMPLATES.find((x) => x.id === tid) || TEMPLATES[0];
+    const photos = itemsRef.current.filter((i) => i.type === "photo");
+    if (!photos.length) return;
+    const cells = t.place(photos.length, width, height);
+    photos.forEach((p, i) => {
+      const c = cells[i];
+      const ia = p.data.img.width / p.data.img.height;
+      let bw, bh;
+      if (ia > c.cw / c.ch) { bw = c.cw; bh = c.cw / ia; }
+      else { bh = c.ch; bw = c.ch * ia; }
+      p.x = c.x; p.y = c.y; p.bw = bw; p.bh = bh;
+      p.scale = 1; p.rot = c.rot;
+      p.data.frame = t.frame;
+    });
+  }, [W, H]);
+
+  /* ---------- add photos ---------- */
+  const onFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    setBusy(true);
+    Promise.all(
+      files.map(
+        (f) =>
+          new Promise((res) => {
+            const r = new FileReader();
+            r.onload = () => {
+              const img = new Image();
+              img.onload = () => res(img);
+              img.onerror = () => res(null);
+              img.src = r.result;
+            };
+            r.onerror = () => res(null);
+            r.readAsDataURL(f);
+          })
+      )
+    ).then((imgs) => {
+      const ok = imgs.filter(Boolean);
+      ok.forEach((img) => {
+        itemsRef.current.push({
+          id: uid(), type: "photo",
+          x: W / 2, y: H / 2, bw: 300, bh: 300, scale: 1, rot: 0,
+          data: { img, frame: "polaroid" },
+        });
+      });
+      applyTemplate(tpl);
+      setBusy(false);
+      if (ok.length < imgs.length) showToast("よみこめない画像があったみたい…🥲");
+      else if (ok.length) showToast(`${ok.length}まい 追加したよ📷`);
+      force();
+    });
+  };
+
+  /* ---------- stickers / text ---------- */
+  const addSticker = (emoji) => {
+    const m = Math.min(W, H);
+    const it = {
+      id: uid(), type: "sticker",
+      x: W / 2 + (Math.random() - 0.5) * W * 0.3,
+      y: H / 2 + (Math.random() - 0.5) * H * 0.3,
+      bw: m * 0.15, bh: m * 0.15, scale: 1,
+      rot: (Math.random() - 0.5) * 30,
+      data: { emoji },
+    };
+    itemsRef.current.push(it);
+    select(it.id);
+    force();
+  };
+
+  const sprinkle = () => {
+    const m = Math.min(W, H);
+    for (let i = 0; i < 6; i++) {
+      itemsRef.current.push({
+        id: uid(), type: "sticker",
+        x: W * (0.1 + Math.random() * 0.8),
+        y: H * (0.1 + Math.random() * 0.8),
+        bw: m * (0.06 + Math.random() * 0.05),
+        bh: m * (0.06 + Math.random() * 0.05),
+        scale: 1, rot: (Math.random() - 0.5) * 60,
+        data: { emoji: SPRINKLE[Math.floor(Math.random() * SPRINKLE.length)] },
+      });
+    }
+    select(null);
+    force();
+    showToast("きらきら ふりかけた✨");
+  };
+
+  const addText = (text) => {
+    const t = (text || "").trim();
+    if (!t) return;
+    const it = {
+      id: uid(), type: "text",
+      x: W / 2, y: H * 0.14, scale: 1, rot: -3,
+      bw: 10, bh: 10,
+      data: { text: t, color: textColor, fs: W * 0.072 },
+    };
+    itemsRef.current.push(it);
+    select(it.id);
+    setTextInput("");
+    force();
+  };
+
+  /* ---------- selection ops ---------- */
+  const selItem = itemsRef.current.find((i) => i.id === selId) || null;
+
+  const removeSel = () => {
+    itemsRef.current = itemsRef.current.filter((i) => i.id !== selId);
+    select(null);
+    force();
+  };
+  const frontSel = () => {
+    const arr = itemsRef.current;
+    const idx = arr.findIndex((i) => i.id === selId);
+    if (idx >= 0) { const [it] = arr.splice(idx, 1); arr.push(it); force(); }
+  };
+  const dupSel = () => {
+    if (!selItem) return;
+    const c = { ...selItem, id: uid(), x: selItem.x + 44, y: selItem.y + 44, data: { ...selItem.data } };
+    delete c._mw;
+    itemsRef.current.push(c);
+    select(c.id);
+    force();
+  };
+  const mutateSel = (fn) => {
+    if (!selItem) return;
+    fn(selItem);
+    force();
+  };
+
+  const clearAll = () => {
+    if (!confirmClear) { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); return; }
+    itemsRef.current = [];
+    select(null);
+    setConfirmClear(false);
+    force();
+  };
+
+  /* ---------- pointer ---------- */
+  const toCanvas = (e) => {
+    const cv = canvasRef.current;
+    const r = cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (cv.width / r.width), y: (e.clientY - r.top) * (cv.height / r.height) };
+  };
+
+  const hitTest = (p) => {
+    const arr = itemsRef.current;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const it = arr[i];
+      const b = getBounds(it);
+      const dx = p.x - it.x, dy = p.y - it.y;
+      const a = (-it.rot * Math.PI) / 180;
+      const lx = dx * Math.cos(a) - dy * Math.sin(a);
+      const ly = dx * Math.sin(a) + dy * Math.cos(a) - b.oy;
+      if (Math.abs(lx) <= b.w / 2 + 10 && Math.abs(ly) <= b.h / 2 + 10) return it;
+    }
+    return null;
+  };
+
+  const onDown = (e) => {
+    e.preventDefault();
+    const p = toCanvas(e);
+    const it = hitTest(p);
+    if (it) {
+      select(it.id);
+      dragRef.current = { id: it.id, ox: p.x - it.x, oy: p.y - it.y };
+      canvasRef.current.setPointerCapture(e.pointerId);
+    } else {
+      select(null);
+    }
+    redraw();
+  };
+  const onMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const it = itemsRef.current.find((i) => i.id === d.id);
+    if (!it) return;
+    const p = toCanvas(e);
+    it.x = p.x - d.ox;
+    it.y = p.y - d.oy;
+    redraw();
+  };
+  const onUp = () => { if (dragRef.current) { dragRef.current = null; force(); } };
+
+  /* ---------- aspect change ---------- */
+  const changeAspect = (key) => {
+    if (key === aspect) return;
+    const nw = ASPECTS[key].w, nh = ASPECTS[key].h;
+    const rx = nw / W, ry = nh / H, rs = Math.min(rx, ry);
+    itemsRef.current.forEach((it) => {
+      it.x *= rx; it.y *= ry; it.scale *= rs;
+    });
+    setAspect(key);
+  };
+
+  /* ---------- export ---------- */
+  const exportPng = (share) => {
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    renderScene(cv.getContext("2d"), W, H, itemsRef.current, bg, null, true);
+    cv.toBlob(async (blob) => {
+      if (!blob) { showToast("ほぞんに失敗しちゃった…🥲"); return; }
+      if (share && navigator.canShare) {
+        try {
+          const file = new File([blob], "oshi-collage.png", { type: "image/png" });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: "ぺたコラ" });
+            showToast("シェアできたよ🎉");
+            return;
+          }
+        } catch (err) { /* user cancelled or unsupported → fall back */ }
+      }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "oshi-collage.png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+      showToast("ほぞんしたよ🎉 Xに投稿してね💖");
+    }, "image/png");
+  };
+
+  /* ================= UI ================= */
+  const hasPhotos = itemsRef.current.some((i) => i.type === "photo");
+
+  return (
+    <div className="pk-app">
+      <style>{CSS}</style>
+
+      <header className="pk-head">
+        <h1 className="pk-title">ぺたコラ</h1>
+        <p className="pk-tag">スパチャのスクショを、かわいく1まいに。</p>
+        <span className="pk-privacy">🔒 写真は端末の中だけ・どこにも送信されません</span>
+      </header>
+
+      <main className="pk-main">
+        {/* ---- canvas ---- */}
+        <div className="pk-canvasCard">
+          <span className="pk-tape pk-tapeL" aria-hidden="true" />
+          <span className="pk-tape pk-tapeR" aria-hidden="true" />
+          <canvas
+            ref={canvasRef}
+            className="pk-canvas"
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerCancel={onUp}
+            aria-label="コラージュの編集キャンバス"
+          />
+          {busy && <div className="pk-busy">よみこみちゅう…🐰</div>}
+        </div>
+        <p className="pk-hint">タップでえらんで、ゆびでうごかせるよ</p>
+
+        {/* ---- selected item controls ---- */}
+        {selItem && (
+          <section className="pk-selBar" aria-label="えらんだアイテムの調整">
+            <div className="pk-selHead">
+              <strong>
+                {selItem.type === "photo" ? "📷 しゃしん" : selItem.type === "sticker" ? `${selItem.data.emoji} シール` : "🖋 もじ"}
+                をへんしゅう
+              </strong>
+              <button className="pk-mini" onClick={() => select(null)}>とじる</button>
+            </div>
+
+            <div className="pk-row">
+              <button className="pk-mini" onClick={frontSel}>⬆ まえへ</button>
+              <button className="pk-mini" onClick={dupSel}>🌱 コピー</button>
+              <button className="pk-mini pk-danger" onClick={removeSel}>🗑 けす</button>
+            </div>
+
+            <label className="pk-sliderRow">
+              <span>おおきさ</span>
+              <input
+                type="range" min="0.25" max="3" step="0.01"
+                value={selItem.scale}
+                onChange={(e) => mutateSel((it) => { it.scale = parseFloat(e.target.value); })}
+              />
+            </label>
+            <label className="pk-sliderRow">
+              <span>かたむき</span>
+              <input
+                type="range" min="-90" max="90" step="1"
+                value={selItem.rot}
+                onChange={(e) => mutateSel((it) => { it.rot = parseFloat(e.target.value); })}
+              />
+            </label>
+
+            {selItem.type === "photo" && (
+              <div className="pk-chips">
+                {FRAMES.map((f) => (
+                  <button
+                    key={f.id}
+                    className={`pk-chip ${selItem.data.frame === f.id ? "pk-on" : ""}`}
+                    onClick={() => mutateSel((it) => { it.data.frame = f.id; })}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {selItem.type === "text" && (
+              <>
+                <input
+                  className="pk-input"
+                  value={selItem.data.text}
+                  onChange={(e) => mutateSel((it) => { it.data.text = e.target.value; delete it._mw; })}
+                  aria-label="もじの内容"
+                />
+                <div className="pk-dots">
+                  {TEXT_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      className={`pk-dot ${selItem.data.color === c ? "pk-on" : ""}`}
+                      style={{ background: c }}
+                      aria-label={`いろ ${c}`}
+                      onClick={() => mutateSel((it) => { it.data.color = c; })}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* ---- tabs ---- */}
+        <nav className="pk-tabs" aria-label="ツール">
+          {[
+            ["photo", "📷", "しゃしん"],
+            ["bg", "🎨", "はいけい"],
+            ["sticker", "🎀", "シール"],
+            ["text", "🖋", "もじ"],
+            ["save", "💾", "ほぞん"],
+          ].map(([id, icon, label]) => (
+            <button
+              key={id}
+              className={`pk-tab ${tab === id ? "pk-on" : ""}`}
+              onClick={() => setTab(id)}
+              aria-pressed={tab === id}
+            >
+              <span className="pk-tabIcon">{icon}</span>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {/* ---- tool panels ---- */}
+        <section className="pk-tool">
+          {tab === "photo" && (
+            <>
+              <button className="pk-big" onClick={() => fileRef.current && fileRef.current.click()}>
+                📷 スクショをえらぶ（なんまいでもOK）
+              </button>
+              <h3 className="pk-h3">ならべかた</h3>
+              <div className="pk-chips">
+                {TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    className={`pk-chip ${tpl === t.id ? "pk-on" : ""}`}
+                    onClick={() => { setTpl(t.id); applyTemplate(t.id); select(null); force(); }}
+                  >
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+              <p className="pk-note">おなじボタンをもういちど押すと、ならびがシャッフルされるよ🔀</p>
+              {hasPhotos && (
+                <button className="pk-mini pk-danger pk-clear" onClick={clearAll}>
+                  {confirmClear ? "ほんとにぜんぶ消す？（もう一回タップ）" : "ぜんぶ消してやりなおす"}
+                </button>
+              )}
+            </>
+          )}
+
+          {tab === "bg" && (
+            <>
+              <h3 className="pk-h3">はいけいをえらぶ</h3>
+              <div className="pk-swGrid">
+                {BGS.map((b) => (
+                  <button
+                    key={b.id}
+                    className={`pk-sw ${bg === b.id ? "pk-on" : ""}`}
+                    onClick={() => { setBg(b.id); }}
+                  >
+                    <span className="pk-swPrev" style={{ background: b.css }} />
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {tab === "sticker" && (
+            <>
+              <button className="pk-big pk-lav" onClick={sprinkle}>✨ きらきらをばらまく</button>
+              <h3 className="pk-h3">タップしてシールをはる</h3>
+              <div className="pk-stkGrid">
+                {STICKERS.map((s) => (
+                  <button key={s} className="pk-stk" onClick={() => addSticker(s)} aria-label={`シール ${s}`}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {tab === "text" && (
+            <>
+              <h3 className="pk-h3">ワンタップで追加</h3>
+              <div className="pk-chips">
+                {TEXT_PRESETS.map((t) => (
+                  <button key={t} className="pk-chip" onClick={() => addText(t)}>{t}</button>
+                ))}
+              </div>
+              <h3 className="pk-h3">じぶんで書く</h3>
+              <div className="pk-row">
+                <input
+                  className="pk-input"
+                  placeholder="すきなことばを入れてね"
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addText(textInput); }}
+                />
+                <button className="pk-mini pk-add" onClick={() => addText(textInput)}>ついか</button>
+              </div>
+              <div className="pk-dots">
+                {TEXT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    className={`pk-dot ${textColor === c ? "pk-on" : ""}`}
+                    style={{ background: c }}
+                    aria-label={`もじのいろ ${c}`}
+                    onClick={() => setTextColor(c)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {tab === "save" && (
+            <>
+              <h3 className="pk-h3">サイズ</h3>
+              <div className="pk-chips">
+                {Object.entries(ASPECTS).map(([k, a]) => (
+                  <button
+                    key={k}
+                    className={`pk-chip ${aspect === k ? "pk-on" : ""}`}
+                    onClick={() => changeAspect(k)}
+                  >
+                    {a.label}（{a.sub}）
+                  </button>
+                ))}
+              </div>
+              <button className="pk-big" onClick={() => exportPng(false)}>💾 画像をほぞんする</button>
+              {canShare && (
+                <button className="pk-big pk-lav" onClick={() => exportPng(true)}>📤 そのままシェアする</button>
+              )}
+              <p className="pk-note">
+                ほぞんした画像は、そのままXなどのSNSに投稿できるよ💖<br />
+                写真はぜんぶ端末の中で処理されるから、あんしんしてね。
+              </p>
+            </>
+          )}
+        </section>
+      </main>
+
+      <footer className="pk-foot">
+        {FEEDBACK_URL ? (
+          <a className="pk-fb" href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+            💌 ご意見・不具合はこちら（30秒アンケート）
+          </a>
+        ) : null}
+        <p className="pk-credit">ぺたコラ ver.0.1（しさくばん）</p>
+      </footer>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={onFiles}
+      />
+
+      {toast && <div className="pk-toast" role="status">{toast}</div>}
+    </div>
+  );
+}
+
+/* ================= styles ================= */
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap');
+
+.pk-app{
+  min-height:100vh;
+  font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif;
+  color:#6B4A5B;
+  background:#FFF4F8;
+  background-image:radial-gradient(#FFE1EC 1.6px, transparent 1.6px);
+  background-size:26px 26px;
+  padding:18px 14px 56px;
+  box-sizing:border-box;
+}
+.pk-app *{box-sizing:border-box;font-family:inherit;}
+.pk-app button{cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.pk-app button:focus-visible,.pk-app input:focus-visible{outline:3px solid #FF9EC4;outline-offset:2px;}
+
+.pk-head{max-width:520px;margin:0 auto 14px;text-align:center;}
+.pk-title{
+  margin:0;font-weight:900;font-size:34px;letter-spacing:.06em;color:#FF6FA5;
+  text-shadow:2.5px 2.5px 0 #FFD9E8;
+}
+.pk-tag{margin:4px 0 8px;font-size:13.5px;font-weight:700;color:#B4708F;}
+.pk-privacy{
+  display:inline-block;font-size:11px;font-weight:700;color:#9A7A8A;
+  background:#fff;border:1.5px solid #FFD9E8;border-radius:999px;padding:4px 12px;
+}
+
+.pk-main{max-width:520px;margin:0 auto;}
+
+.pk-canvasCard{
+  position:relative;background:#fff;border-radius:24px;padding:12px;
+  border:2px solid #FFD9E8;
+  box-shadow:0 10px 26px rgba(240,130,175,.18);
+}
+.pk-canvas{
+  width:100%;height:auto;display:block;border-radius:16px;
+  touch-action:none;background:#fff;
+}
+.pk-tape{
+  position:absolute;top:-11px;width:88px;height:26px;border-radius:3px;
+  background:linear-gradient(180deg,rgba(255,158,196,.75),rgba(255,158,196,.55));
+  box-shadow:0 2px 5px rgba(200,100,150,.18);z-index:2;
+}
+.pk-tapeL{left:26px;transform:rotate(-7deg);}
+.pk-tapeR{right:26px;transform:rotate(6deg);background:linear-gradient(180deg,rgba(178,150,235,.7),rgba(178,150,235,.5));}
+.pk-busy{
+  position:absolute;inset:12px;border-radius:16px;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.75);font-weight:900;color:#E8558C;font-size:16px;
+}
+.pk-hint{text-align:center;font-size:11.5px;color:#C08FA9;margin:8px 0 12px;font-weight:700;}
+
+.pk-selBar{
+  background:#fff;border:2px solid #C9B6F8;border-radius:20px;
+  padding:12px 14px;margin-bottom:12px;
+  box-shadow:0 6px 16px rgba(170,140,220,.16);
+}
+.pk-selHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:14px;color:#7B5FB8;}
+.pk-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;}
+.pk-mini{
+  border:2px solid #FFCFE2;background:#fff;color:#B4487C;font-weight:800;
+  border-radius:999px;padding:7px 14px;font-size:12.5px;
+}
+.pk-mini:active{transform:scale(.96);}
+.pk-danger{border-color:#FFB3C4;color:#E0446E;background:#FFF3F6;}
+.pk-add{border-color:#B9E7D8;color:#2E9B7C;background:#F0FBF7;}
+.pk-clear{margin-top:14px;width:100%;}
+.pk-sliderRow{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px;font-weight:800;color:#9A6E86;}
+.pk-sliderRow span{width:58px;flex:none;}
+.pk-sliderRow input[type=range]{flex:1;accent-color:#FF6FA5;height:26px;}
+
+.pk-tabs{
+  display:flex;gap:6px;background:#fff;border:2px solid #FFD9E8;border-radius:999px;
+  padding:6px;margin-bottom:12px;box-shadow:0 6px 16px rgba(240,130,175,.14);
+}
+.pk-tab{
+  flex:1;border:none;background:transparent;border-radius:999px;padding:8px 2px;
+  font-size:11px;font-weight:800;color:#C08FA9;display:flex;flex-direction:column;align-items:center;gap:1px;
+}
+.pk-tabIcon{font-size:17px;line-height:1;}
+.pk-tab.pk-on{
+  background:linear-gradient(135deg,#FF8FBB,#FF6FA5);color:#fff;
+  box-shadow:0 4px 10px rgba(255,111,165,.4);
+}
+
+.pk-tool{
+  background:#fff;border:2px solid #FFD9E8;border-radius:22px;padding:16px;
+  box-shadow:0 8px 20px rgba(240,130,175,.14);
+}
+.pk-h3{margin:14px 0 8px;font-size:13px;color:#B4708F;font-weight:900;}
+.pk-h3:first-child{margin-top:0;}
+.pk-note{font-size:11.5px;color:#C08FA9;font-weight:700;line-height:1.7;margin:10px 0 0;}
+
+.pk-big{
+  width:100%;border:none;border-radius:18px;padding:15px 12px;
+  background:linear-gradient(135deg,#FF8FBB,#FF6FA5);color:#fff;
+  font-size:15px;font-weight:900;letter-spacing:.03em;
+  box-shadow:0 6px 14px rgba(255,111,165,.42);
+  margin-bottom:6px;
+}
+.pk-big:active{transform:scale(.98);}
+.pk-lav{background:linear-gradient(135deg,#BFA6F2,#A78BE0);box-shadow:0 6px 14px rgba(167,139,224,.42);margin-top:8px;}
+
+.pk-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.pk-chip{
+  border:2px solid #FFCFE2;background:#fff;color:#B4487C;font-weight:800;
+  border-radius:999px;padding:8px 14px;font-size:12.5px;
+}
+.pk-chip.pk-on{background:#FF6FA5;border-color:#FF6FA5;color:#fff;}
+
+.pk-stkGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+.pk-stk{
+  font-size:26px;background:#FFF6FA;border:2px solid #FFE0EC;border-radius:16px;
+  padding:8px 0;line-height:1.3;
+}
+.pk-stk:active{transform:scale(.92);}
+
+.pk-swGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+.pk-sw{
+  display:flex;align-items:center;gap:9px;background:#fff;border:2px solid #FFE0EC;
+  border-radius:16px;padding:8px 10px;font-size:12.5px;font-weight:800;color:#B4708F;
+}
+.pk-sw.pk-on{border-color:#FF6FA5;background:#FFF3F8;color:#E8558C;}
+.pk-swPrev{width:38px;height:38px;border-radius:12px;flex:none;border:1.5px solid rgba(230,140,180,.35);}
+
+.pk-input{
+  flex:1;min-width:0;border:2px solid #FFCFE2;border-radius:14px;padding:10px 12px;
+  font-size:14px;color:#6B4A5B;background:#FFFBFD;width:100%;
+}
+.pk-dots{display:flex;gap:9px;margin-top:10px;flex-wrap:wrap;}
+.pk-dot{
+  width:30px;height:30px;border-radius:999px;border:2.5px solid rgba(200,130,165,.35);
+}
+.pk-dot.pk-on{border-color:#6B4A5B;transform:scale(1.12);}
+
+.pk-toast{
+  position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+  background:#FF6FA5;color:#fff;font-weight:900;font-size:13.5px;
+  padding:11px 22px;border-radius:999px;box-shadow:0 8px 20px rgba(255,111,165,.5);
+  z-index:50;white-space:nowrap;
+}
+
+.pk-foot{max-width:520px;margin:24px auto 0;text-align:center;}
+.pk-fb{
+  display:inline-block;background:#fff;border:2px solid #C9B6F8;color:#7B5FB8;
+  font-weight:900;border-radius:999px;padding:12px 22px;font-size:13px;
+  text-decoration:none;box-shadow:0 5px 12px rgba(167,139,224,.25);
+}
+.pk-fb:active{transform:scale(.97);}
+.pk-credit{font-size:10.5px;color:#CFA3BC;font-weight:700;margin-top:10px;}
+
+@media (prefers-reduced-motion: reduce){
+  .pk-app *{transition:none!important;animation:none!important;}
+}
+`;
+
+ReactDOM.createRoot(document.getElementById("root")).render(<PetaKora />);
+</script>
+<noscript>このアプリの利用にはJavaScriptが必要です。</noscript>
+</body>
+</html>
